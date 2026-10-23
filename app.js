@@ -174,8 +174,8 @@ function operationProduction(step){const produced={};for(const line of step.line
 function commonProgress(step){const quantities=step.lines.filter(line=>line.kind!=='idle').map(line=>line.kind==='continue'?line.remaining:line.job.qty);return quantities.length?Math.min(...quantities):0;}
 
 function renderInputs(){
- const groups=[['base','初階素材','BASE MATERIALS'],['advanced','進階素材','ADVANCED MATERIALS']];
- $('demandGroups').innerHTML=groups.map(([tier,title,mark])=>`<section class="tier-group"><div class="tier-title">${title}<span class="tier-mark">${mark}</span></div><div class="material-grid">${MATERIALS.filter(m=>m.tier===tier).map(m=>`<button type="button" class="material-tile" data-material="${m.id}" title="${esc(m.name)}" aria-label="${esc(m.short)}，${Number(state.counts[m.id])||0} 件。點左半減少，右半增加；按住顯示全名。"><span class="material-short">${esc(m.short)}</span><span class="material-count">${Number(state.counts[m.id])||0}</span><span class="long-name">${esc(m.name)}</span></button>`).join('')}</div></section>`).join('');
+ const groups=[['base','初階素材'],['advanced','進階素材']];
+ $('demandGroups').innerHTML=groups.map(([tier,title])=>`<section class="tier-group"><div class="tier-title">${title}</div><div class="material-grid">${MATERIALS.filter(m=>m.tier===tier).map(m=>`<button type="button" class="material-tile" data-material="${m.id}" title="${esc(m.name)}" aria-label="${esc(m.short)}，${Number(state.counts[m.id])||0} 件。點左半減少，右半增加；按住顯示全名。"><span class="material-short">${esc(m.short)}</span><span class="material-count">${Number(state.counts[m.id])||0}</span><span class="long-name">${esc(m.name)}</span></button>`).join('')}</div></section>`).join('');
 document.querySelectorAll('.material-tile').forEach(tile=>{
   let down=null,longTimer=null,longShown=false,suppressClick=false;const id=tile.dataset.material;
   const adjust=delta=>{if(state.timer)return;state.operationOverride=null;state.counts[id]=Math.max(0,(Number(state.counts[id])||0)+delta);state.selectedIndex=0;state.expandedIndex=null;renderInputs();recalculateSchedule();};
@@ -251,7 +251,8 @@ function scheduleTimer(){clearTimeout(wakeHandle);if(!state.timer)return;const m
 async function sendSystemNotification(timer){
  if(!('Notification'in window)||Notification.permission!=='granted')return;
  const body=timer.next==='本次需求已安排完成'?timer.next:`接下來：${timer.next}`;
- try{const registration=await navigator.serviceWorker?.ready;if(registration?.showNotification)await registration.showNotification('潛力工坊｜生產提醒',{body,icon:'./icon.svg',badge:'./icon.svg',tag:'tkfm-production-next',renotify:true,data:{url:'./'}});else new Notification('潛力工坊｜生產提醒',{body,icon:'./icon.svg',tag:'tkfm-production-next'});}catch(error){try{new Notification('潛力工坊｜生產提醒',{body,icon:'./icon.svg'});}catch{console.info('系統通知無法顯示',error);}}
+ const options={body,icon:'./icon.svg',badge:'./icon.svg',tag:'tkfm-production-next',renotify:true,data:{url:'./'},...(state.vibrate?{vibrate:[900,350,900,350,900]}:{})};
+ try{const registration=await navigator.serviceWorker?.ready;if(registration?.showNotification)await registration.showNotification('潛力工坊｜生產提醒',options);else new Notification('潛力工坊｜生產提醒',options);}catch(error){try{new Notification('潛力工坊｜生產提醒',options);}catch{console.info('系統通知無法顯示',error);}}
 }
 function stopVibration(){if(vibrationHandle){clearInterval(vibrationHandle);vibrationHandle=null;}if(navigator.vibrate)navigator.vibrate(0);}
 function finishTimer(){if(!state.timer)return;const timer=state.timer;clearTimeout(wakeHandle);wakeHandle=null;state.timer=null;persist();clearInterval(timerHandle);timerHandle=null;render();sendSystemNotification(timer);if(state.vibrate&&navigator.vibrate){navigator.vibrate([900,350,900,350,900]);vibrationHandle=setInterval(()=>navigator.vibrate([900,350,900,350,900]),4000);}}
