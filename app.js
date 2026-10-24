@@ -17,7 +17,7 @@ state.timer=state.timer&&Number.isFinite(state.timer.deadline)?state.timer:null;
 state.vibrate=typeof state.vibrate==='boolean'?state.vibrate:true;
 state.operationOverride=Array.isArray(state.operationOverride)?state.operationOverride:null;
 state.plan=null;
-let timerHandle=null,wakeHandle=null,vibrationHandle=null;
+let timerHandle=null,wakeHandle=null,vibrationHandle=null,alertVibrating=false,suppressFinishVibration=false;
 const scheduler=new ProductionScheduler();
 let schedulerRequest=0,schedulerResult=null,schedulerComputing=false,schedulerLocked=false,schedulerProgress=null;
 function persist(){try{localStorage.setItem(STORE,JSON.stringify(state));}catch(e){console.warn('無法儲存本機排程',e);}}
@@ -248,15 +248,17 @@ function startSelected(){
 }
 async function requestNotifications(){if(!('Notification'in window))return;if(Notification.permission==='default'){try{await Notification.requestPermission();}catch{}}}
 function scheduleTimer(){clearTimeout(wakeHandle);if(!state.timer)return;const ms=state.timer.deadline-Date.now();if(ms<=0){finishTimer();return;}wakeHandle=setTimeout(finishTimer,ms);}
-async function sendSystemNotification(timer){
+async function sendSystemNotification(timer,includeVibration=state.vibrate){
  if(!('Notification'in window)||Notification.permission!=='granted')return;
  const body=timer.next==='本次需求已安排完成'?timer.next:`接下來：${timer.next}`;
- const options={body,icon:'./icon.svg',badge:'./icon.svg',tag:'tkfm-production-next',renotify:true,data:{url:'./'},...(state.vibrate?{vibrate:[900,350,900,350,900]}:{})};
+ const options={body,icon:'./icon.svg',badge:'./icon.svg',tag:'tkfm-production-next',renotify:true,data:{url:'./'},...(includeVibration?{vibrate:[900,350,900,350,900]}:{})};
  try{const registration=await navigator.serviceWorker?.ready;if(registration?.showNotification)await registration.showNotification('潛力工坊｜生產提醒',options);else new Notification('潛力工坊｜生產提醒',options);}catch(error){try{new Notification('潛力工坊｜生產提醒',options);}catch{console.info('系統通知無法顯示',error);}}
 }
 function stopVibration(){if(vibrationHandle){clearInterval(vibrationHandle);vibrationHandle=null;}if(navigator.vibrate)navigator.vibrate(0);}
-function finishTimer(){if(!state.timer)return;const timer=state.timer;clearTimeout(wakeHandle);wakeHandle=null;state.timer=null;persist();clearInterval(timerHandle);timerHandle=null;render();sendSystemNotification(timer);if(state.vibrate&&navigator.vibrate){navigator.vibrate([900,350,900,350,900]);vibrationHandle=setInterval(()=>navigator.vibrate([900,350,900,350,900]),4000);}}
-function stopTimer(){clearTimeout(wakeHandle);clearInterval(timerHandle);stopVibration();wakeHandle=null;timerHandle=null;state.timer=null;persist();render();}
+function stopAlertVibration(){if(!alertVibrating)return;alertVibrating=false;stopVibration();if('serviceWorker'in navigator)navigator.serviceWorker.getRegistration().then(registration=>registration?.getNotifications({tag:'tkfm-production-next'}).then(notifications=>notifications.forEach(notification=>notification.close()))).catch(()=>{});}
+function finishTimer(){if(!state.timer)return;const timer=state.timer,shouldVibrate=state.vibrate&&!suppressFinishVibration;clearTimeout(wakeHandle);wakeHandle=null;state.timer=null;persist();clearInterval(timerHandle);timerHandle=null;render();alertVibrating=shouldVibrate;sendSystemNotification(timer,shouldVibrate);if(shouldVibrate&&navigator.vibrate){navigator.vibrate([900,350,900,350,900]);vibrationHandle=setInterval(()=>navigator.vibrate([900,350,900,350,900]),4000);}}
+function resumeInForeground(){if(document.visibilityState!=='visible')return;if(state.timer&&state.timer.deadline<=Date.now()){suppressFinishVibration=true;checkTimer();suppressFinishVibration=false;}else{stopAlertVibration();checkTimer();}}
+function stopTimer(){clearTimeout(wakeHandle);clearInterval(timerHandle);stopVibration();alertVibrating=false;wakeHandle=null;timerHandle=null;state.timer=null;persist();render();}
 function drawTimer(){if(!state.timer)return;$('timerValue').textContent=formatTime(Math.ceil(Math.max(0,state.timer.deadline-Date.now())/1000));$('timerLabel').textContent=`等待提醒 · ${state.timer.label}`;clearInterval(timerHandle);timerHandle=setInterval(()=>{if(!state.timer){clearInterval(timerHandle);return;}const remain=state.timer.deadline-Date.now();if(remain<=0){finishTimer();return;}$('timerValue').textContent=formatTime(Math.ceil(remain/1000));},250);}
 function checkTimer(){if(!state.timer)return;if(state.timer.deadline<=Date.now())finishTimer();else{render();scheduleTimer();}}
 
@@ -267,6 +269,9 @@ $('exampleBtn').addEventListener('click',()=>adjustExampleOrClear(EXAMPLE));
 $('clearBtn').addEventListener('click',()=>adjustExampleOrClear(emptyCounts()));
  $('vibrateToggle').checked=state.vibrate;$('vibrateToggle').addEventListener('change',()=>{state.vibrate=$('vibrateToggle').checked;if(!state.vibrate)stopVibration();persist();});
 if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(error=>console.info('Service worker 無法啟用',error)));
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkTimer();});
-window.addEventListener('pageshow',checkTimer);
+document.addEventListener('pointerdown',stopAlertVibration,true);
+document.addEventListener('click',stopAlertVibration,true);
+document.addEventListener('visibilitychange',resumeInForeground);
+window.addEventListener('pageshow',resumeInForeground);
 renderInputs();if(state.operationOverride)render();else recalculateSchedule();checkTimer();
+
