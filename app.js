@@ -19,7 +19,7 @@ state.operationOverride=Array.isArray(state.operationOverride)?state.operationOv
 state.plan=null;
 let timerHandle=null,wakeHandle=null,vibrationHandle=null,alertVibrating=false,suppressFinishVibration=false;
 const scheduler=new ProductionScheduler();
-let schedulerRequest=0,schedulerResult=null,schedulerComputing=false,schedulerLocked=false,schedulerProgress=null;
+let schedulerRequest=0,schedulerResult=null,schedulerComputing=false,schedulerLocked=false,schedulerProgress=null,schedulerQueue=Promise.resolve();
 function persist(){try{localStorage.setItem(STORE,JSON.stringify(state));}catch(e){console.warn('無法儲存本機排程',e);}}
 function totalQty(){return MATERIALS.reduce((n,m)=>n+(Number(state.counts[m.id])||0),0);}
 function formatDuration(seconds){seconds=Math.max(0,Math.round(seconds));const m=Math.floor(seconds/60),s=seconds%60;return m?`${m} 分${s?`${String(s).padStart(2,'0')} 秒`:''}`:`${s} 秒`;}
@@ -141,8 +141,8 @@ function optimizePlan(seedPlan){
 function getMaterialsFromUI(){return Object.fromEntries(MATERIALS.map(m=>[m.short,Number(state.counts[m.id])||0]));}
 function recalculateSchedule(){
  const request=++schedulerRequest,materials=getMaterialsFromUI();schedulerResult=null;schedulerProgress=null;schedulerLocked=false;state.plan=null;schedulerComputing=Object.values(materials).some(qty=>qty>0);
- if(!schedulerComputing){scheduler.stop();render();return;}
- scheduler.calculate(materials,payload=>{
+ if(!schedulerComputing){schedulerQueue=schedulerQueue.then(()=>scheduler.stop()).catch(error=>console.error('停止排程搜尋失敗',error));render();return;}
+ const onSchedulerEvent=payload=>{
   if(request!==schedulerRequest||!payload)return;
   const type=payload.type,data=type?payload.data:payload;
   if(type==='PROGRESS'||(Number.isFinite(data?.percent)&&Number.isFinite(data?.nodes))){schedulerProgress=data;schedulerComputing=true;updateStatsBadge(schedulerResult?.stats,data);updateProgressUI();return;}
@@ -152,7 +152,13 @@ function recalculateSchedule(){
   schedulerResult=result;schedulerComputing=(type==='UPDATE'||!type)&&result.debug?.status==='SEARCHING';
   if(type==='COMPLETE'||result.debug?.isOptimal)schedulerProgress={percent:100,nodes:result.debug?.exploredNodes||0,elapsedMs:result.debug?.executionTimeMs||0,currentBestBatches:result.stats?.totalBatches||0,currentBestOps:result.stats?.totalOperations||0,currentMixedBatches:result.stats?.mixedBatches||0};
   state.selectedIndex=Math.min(state.selectedIndex,Math.max(0,schedulerRows(result).length-1));render();
- });
+ };
+ schedulerQueue=schedulerQueue.then(async()=>{
+  if(request!==schedulerRequest)return;
+  await scheduler.stop();
+  if(request!==schedulerRequest)return;
+  await scheduler.calculate(materials,onSchedulerEvent);
+ }).catch(error=>{if(request===schedulerRequest){schedulerComputing=false;schedulerProgress=null;console.error('排程搜尋啟動失敗',error);render();}});
  render();
 }
 function schedulerRows(result){
@@ -234,7 +240,7 @@ function updateProgressUI(){
 }
 function startSelected(){
  if(state.timer)return;
- scheduler.stop();schedulerRequest++;
+ schedulerRequest++;schedulerQueue=schedulerQueue.then(()=>scheduler.stop()).catch(error=>console.error('停止排程搜尋失敗',error));
  schedulerComputing=false;schedulerLocked=true;schedulerProgress=null;
  stopVibration();
  const steps=buildOperations(state.plan);if(!steps.length)return;
@@ -263,7 +269,7 @@ function drawTimer(){if(!state.timer)return;$('timerValue').textContent=formatTi
 function checkTimer(){if(!state.timer)return;if(state.timer.deadline<=Date.now())finishTimer();else{render();scheduleTimer();}}
 
 function adjustExampleOrClear(counts){if(state.timer)stopTimer();state.operationOverride=null;state.counts={...emptyCounts(),...counts};state.selectedIndex=0;state.expandedIndex=null;renderInputs();recalculateSchedule();}
- $('runBtn').addEventListener('click',()=>{if(schedulerComputing){scheduler.stop();schedulerRequest++;schedulerComputing=false;schedulerProgress=null;render();return;}startSelected();});
+ $('runBtn').addEventListener('click',()=>{if(schedulerComputing){schedulerRequest++;schedulerQueue=schedulerQueue.then(()=>scheduler.stop()).catch(error=>console.error('停止排程搜尋失敗',error));schedulerComputing=false;schedulerProgress=null;render();return;}startSelected();});
 $('stopBtn').addEventListener('click',stopTimer);
 $('exampleBtn').addEventListener('click',()=>adjustExampleOrClear(EXAMPLE));
 $('clearBtn').addEventListener('click',()=>adjustExampleOrClear(emptyCounts()));
